@@ -63,7 +63,7 @@ class Tree:
         self.root = Node()
         self.root.stock_price = self.market.initial_stock_price
         self.alpha = exp((market.interest_rate * self.time_delta) + (market.volatility * self.multiplicator * sqrt(self.time_delta)))
-
+        # créer un attribut qui contient la valeur exp(r*dt)
     market:Market
     steps_number:int
     alpha:float
@@ -74,6 +74,27 @@ class Tree:
 
     def variance(self, node):
         return (node.stock_price**2)*exp(2*self.market.interest_rate*self.time_delta)*(exp((self.market.volatility**2)*self.time_delta)-1)
+    
+    def build_next_trunk(self, node):
+        # node creation
+        node.next_mid = Node()
+
+        # previous assignation
+        node.next_mid.previous = node
+
+        # links
+        node.next_up = Node()
+        node.next_mid.above = node.next_up
+        node.next_up.below = node.next_mid
+        node.next_down = Node()
+        node.next_mid.below = node.next_down
+        node.next_down.above = node.next_mid
+        # stock price computation
+        node.next_mid.stock_price = node.stock_price * exp(self.market.interest_rate * self.time_delta)
+        node.next_up.stock_price = node.next_mid.stock_price*self.alpha
+        node.next_down.stock_price = node.next_mid.stock_price/self.alpha
+        print(f"Trunk built {node.next_mid.stock_price}")
+        return
     
     def compute_probas(self, node):
         variance = self.variance(node)
@@ -87,73 +108,69 @@ class Tree:
         print(f"Proba down {node.proba_down}")
         return
 
-    def build_next(self, node):
-        # node creation
-        node.next_mid = Node()
+    def find_closest_node(self, node, node_price):
+        node_up = node
+        closest_node = node
+        min_delta = node_price
+        node_down = node
+        while (node_up != None):
+            if (abs(node_up.stock_price - node_price) < min_delta):
+                closest_node = node_up
+            node_up = node_up.above
+        while (node_down != None):
+            if (abs(node_down.stock_price - node_price) < min_delta):
+                closest_node = node_down
+            node_down = node_down.below
+        return closest_node
 
-        # previous assignation
-        node.next_mid.previous = node
-
-        # links if the node is on top or bottom of the tree
-        if node.above == None :
-            node.next_up = Node()
-            node.next_up.stock_price = node.stock_price * self.alpha # WIP
-            node.next_up.below = node.next_mid
-            node.next_mid.above = node.next_up
-            # calcul prix stock next_up
-
-        if node.below == None :
-            node.next_down = Node()
-            node.next_down = node.stock_price * self.alpha
-            node.next_down.above = node.next_mid
-            node.next_mid.below = node.next_down
-            # calcul prix stock next_down
-
-        # stock price computation
-        node.next_mid.stock_price = node.stock_price * exp(self.market.interest_rate * self.time_delta)
-        return
-    
     def build_above(self, node):
-        if node.previous == None:
+        if node == None:
             print("Building up done")
             return
         
-        node.above = Node()
-        node.above.below = node
-        node.above.previous = node.previous.above
-        node.previous.next_up = node.above
-        if node.previous.above != None:
-            node.previous.above.next_mid = node.above
-            if node.previous.above.above != None:
-                node.previous.above.above.next_down = node.above
-        node.above.stock_price = node.stock_price*self.alpha
-        print(f"Building up {node.above.stock_price}")
+        node.next_mid = self.find_closest_node(node.below.next_mid, node.stock_price)
+        if (node.next_mid.above == None): # isoler dans une méthode
+            node.next_mid.above = Node()
+            node.next_mid.above.below = node.next_mid
+            node.next_mid.above.stock_price = node.next_mid.stock_price * self.alpha
+        
+        if (node.next_mid.below == None):
+            node.next_mid.below = Node()
+            node.next_mid.below.above = node.next_mid
+            node.next_mid.below.stock_price = node.next_mid.stock_price / self.alpha
+        node.next_up = node.next_mid.above
+        node.next_down = node.next_mid.below
+
+        #print(f"Building up {node.above.stock_price}")
         
         self.build_above(node.above)
 
-        self.compute_probas(node.previous)
+        self.compute_probas(node)
 
         return
 
     def build_below(self, node):
-        if node.previous == None:
+        if node == None:
             print("Building down done")
             return
         
-        node.below = Node()
-        node.below.above = node
-        node.below.previous = node.previous.below
-        node.previous.next_down = node.below
-        if node.previous.below != None:
-            node.previous.below.next_mid = node.below
-            if node.previous.below.below != None:
-                node.previous.below.below.next_up = node.below
-        node.below.stock_price = node.stock_price/self.alpha
-        print(f"Building down {node.below.stock_price}")
+        node.next_mid = self.find_closest_node(node.above.next_mid, node.stock_price)
+        if (node.next_mid.above == None): # isoler dans une méthode
+            node.next_mid.above = Node()
+            node.next_mid.above.below = node.next_mid
+            node.next_mid.above.stock_price = node.next_mid.stock_price * self.alpha
+        
+        if (node.next_mid.below == None):
+            node.next_mid.below = Node()
+            node.next_mid.below.above = node.next_mid
+            node.next_mid.below.stock_price = node.next_mid.stock_price / self.alpha
+        node.next_up = node.next_mid.above
+        node.next_down = node.next_mid.below
+        #print(f"Building down {node.below.stock_price}")
 
         self.build_below(node.below)
 
-        self.compute_probas(node.previous)
+        self.compute_probas(node)
         
         return 
 
@@ -161,15 +178,25 @@ class Tree:
         if steps_left == 0:
             return
         
-        self.build_next(node)
-        self.build_above(node.next_mid)
-        self.build_below(node.next_mid)
+        self.build_next_trunk(node)
+        self.compute_probas(node)
+        self.build_above(node.above)
+        self.build_below(node.below)
         #self.compute_probas(node)
         return self.build(node.next_mid, steps_left-1)
     
+pricing_date = datetime(2022,9,29)
+mat_date = datetime(2023,2,23)
+stock_price = 100
+interest_rate = 0.02
+vol = 0.2
+nb_steps = 2
+dividend_date = datetime(2023,1,25)
+dividend = 2
 
 
-option = Option(datetime(2023,2,23), datetime(2022,9,29), Option_Type.European, 120, True)
-market = Market(0.03, 0.25, 2, datetime(2023,5,15), 100)
+
+option = Option(mat_date, pricing_date, Option_Type.European, 120, True)
+market = Market(interest_rate, vol, dividend, dividend_date, stock_price)
 tree = Tree(2, market, option)
 tree.build(tree.root, tree.steps_number)
