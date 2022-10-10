@@ -16,9 +16,14 @@ class Node:
     next_up = None
     next_mid = None
     next_down = None
-    previous = None
     above = None
     below = None
+
+class Trunk_node(Node):
+    def __init__(self):
+        super().__init__()
+    
+    previous = None
 
 class Market:
     def __init__(self, interest_rate, volatility, dividend, dividend_date, initial_stock_price):
@@ -39,17 +44,17 @@ class Option_Type(Enum):
     European = 2
 
 class Option:
-    def __init__(self, maturity_date, pricing_date, option_type, strike, is_call) :
+    def __init__(self, maturity_date, pricing_date, option_type, strike_price, is_call) :
         self.is_call = is_call
         self.maturity_date = maturity_date
         self.pricing_date = pricing_date
         self.option_type = option_type
-        self.strike = strike
+        self.strike_price = strike_price
 
     maturity_date:datetime
     pricing_date:datetime
     option_type:Option_Type
-    strike:float
+    strike_price:float
     is_call:bool
     price:float
 
@@ -63,7 +68,7 @@ class Tree:
         self.root = Node()
         self.root.stock_price = self.market.initial_stock_price
         self.alpha = exp((market.interest_rate * self.time_delta) + (market.volatility * self.multiplicator * sqrt(self.time_delta)))
-        # créer un attribut qui contient la valeur exp(r*dt)
+        self.discount_factor = exp((market.interest_rate * self.time_delta))
     market:Market
     steps_number:int
     alpha:float
@@ -71,13 +76,14 @@ class Tree:
     root:Node
     multiplicator:float
     option:Option
+    discount_factor:float
 
     def variance(self, node):
-        return (node.stock_price**2)*exp(2*self.market.interest_rate*self.time_delta)*(exp((self.market.volatility**2)*self.time_delta)-1)
+        return (node.stock_price**2)*(exp((self.market.volatility**2)*self.time_delta)-1)*(self.discount_factor**2)
     
     def build_next_trunk(self, node):
         # node creation
-        node.next_mid = Node()
+        node.next_mid = Trunk_node()
 
         # previous assignation
         node.next_mid.previous = node
@@ -90,10 +96,10 @@ class Tree:
         node.next_mid.below = node.next_down
         node.next_down.above = node.next_mid
         # stock price computation
-        node.next_mid.stock_price = node.stock_price * exp(self.market.interest_rate * self.time_delta)
+        node.next_mid.stock_price = node.stock_price * self.discount_factor
         node.next_up.stock_price = node.next_mid.stock_price*self.alpha
         node.next_down.stock_price = node.next_mid.stock_price/self.alpha
-        print(f"Trunk built {node.next_mid.stock_price}")
+        #print(f"Trunk built {node.next_mid.stock_price}")
         return
     
     def compute_probas(self, node):
@@ -102,10 +108,10 @@ class Tree:
         node.proba_up = (node.next_mid.stock_price **(-1) * node.next_mid.stock_price - 1 - (self.alpha**(-1) - 1)*node.proba_down) / (self.alpha - 1)
         node.proba_mid = 1 - node.proba_down - node.proba_up
 
-        print(f"For node {node.stock_price}")
-        print(f"Proba up {node.proba_up}")
-        print(f"Proba mid {node.proba_mid}")
-        print(f"Proba down {node.proba_down}")
+        # print(f"For node {node.stock_price}")
+        # print(f"Proba up {node.proba_up}")
+        # print(f"Proba mid {node.proba_mid}")
+        # print(f"Proba down {node.proba_down}")
         return
 
     def find_closest_node(self, node, node_price):
@@ -113,23 +119,19 @@ class Tree:
         closest_node = node
         min_delta = node_price
         node_down = node
-        while (node_up != None):
+        while (node_up != None and node_up.stock_price < node.stock_price * self.alpha):
             if (abs(node_up.stock_price - node_price) < min_delta):
                 closest_node = node_up
             node_up = node_up.above
-        while (node_down != None):
+        while (node_down != None and node_down.stock_price > node.stock_price / self.alpha):
             if (abs(node_down.stock_price - node_price) < min_delta):
                 closest_node = node_down
             node_down = node_down.below
         return closest_node
 
-    def build_above(self, node):
-        if node == None:
-            print("Building up done")
-            return
-        
-        node.next_mid = self.find_closest_node(node.below.next_mid, node.stock_price)
-        if (node.next_mid.above == None): # isoler dans une méthode
+    def link_and_build(self, node, start_node):
+        node.next_mid = self.find_closest_node(start_node, node.stock_price)
+        if (node.next_mid.above == None):
             node.next_mid.above = Node()
             node.next_mid.above.below = node.next_mid
             node.next_mid.above.stock_price = node.next_mid.stock_price * self.alpha
@@ -141,8 +143,13 @@ class Tree:
         node.next_up = node.next_mid.above
         node.next_down = node.next_mid.below
 
-        #print(f"Building up {node.above.stock_price}")
+    def build_above(self, node):
+        if node == None:
+            #print("Building up done")
+            return
         
+        self.link_and_build(node, node.below.next_mid)
+
         self.build_above(node.above)
 
         self.compute_probas(node)
@@ -151,22 +158,10 @@ class Tree:
 
     def build_below(self, node):
         if node == None:
-            print("Building down done")
+            #print("Building down done")
             return
         
-        node.next_mid = self.find_closest_node(node.above.next_mid, node.stock_price)
-        if (node.next_mid.above == None): # isoler dans une méthode
-            node.next_mid.above = Node()
-            node.next_mid.above.below = node.next_mid
-            node.next_mid.above.stock_price = node.next_mid.stock_price * self.alpha
-        
-        if (node.next_mid.below == None):
-            node.next_mid.below = Node()
-            node.next_mid.below.above = node.next_mid
-            node.next_mid.below.stock_price = node.next_mid.stock_price / self.alpha
-        node.next_up = node.next_mid.above
-        node.next_down = node.next_mid.below
-        #print(f"Building down {node.below.stock_price}")
+        self.link_and_build(node, node.above.next_mid)
 
         self.build_below(node.below)
 
@@ -182,21 +177,37 @@ class Tree:
         self.compute_probas(node)
         self.build_above(node.above)
         self.build_below(node.below)
-        #self.compute_probas(node)
         return self.build(node.next_mid, steps_left-1)
+    
+    def payoff(self, node):
+        if self.option.is_call:
+            return max(0, node.stock_price - self.option.strike_price)
+        else:
+            return max(0, self.option.strike_price - node.stock_price)
+    
+    def price(self, node):
+        if self.option.option_type == Option_Type.European:
+            if node.next_mid == None:
+                return self.payoff(node)
+            else:
+                return self.price(node.next_up) * node.proba_up * self.discount_factor + self.price(node.next_mid) * node.proba_mid * self.discount_factor + self.price(node.next_down) * node.proba_down * self.discount_factor
+        else:
+            return 0
     
 pricing_date = datetime(2022,9,29)
 mat_date = datetime(2023,2,23)
 stock_price = 100
-interest_rate = 0.02
-vol = 0.2
-nb_steps = 2
-dividend_date = datetime(2023,1,25)
+interest_rate = 0.03
+vol = 0.25
+nb_steps = 15
+dividend_date = datetime(2023,5,15)
 dividend = 2
 
 
 
-option = Option(mat_date, pricing_date, Option_Type.European, 120, True)
+call = Option(mat_date, pricing_date, Option_Type.European, 110, True)
+put = Option(mat_date, pricing_date, Option_Type.European, 110, False)
 market = Market(interest_rate, vol, dividend, dividend_date, stock_price)
-tree = Tree(2, market, option)
+tree = Tree(nb_steps, market, put)
 tree.build(tree.root, tree.steps_number)
+print(tree.price(tree.root))
