@@ -1,11 +1,11 @@
 from datetime import datetime, timedelta
 from enum import Enum
 from math import exp, sqrt
+from time import perf_counter
 
 # TODO
 # DIVIDENDES
 # AMERICAINES
-# PRICING POURRI
 
 
 class Node:
@@ -71,7 +71,7 @@ class Option:
     price:float
 
 class Tree:
-    def __init__(self, steps_number:int, market:Market, option:Option):
+    def __init__(self, steps_number:int, market:Market, option:Option, pruning:bool):
         self.multiplicator = sqrt(3)
         self.steps_number = steps_number
         self.option = option
@@ -82,6 +82,8 @@ class Tree:
         self.root.proba_node = 1
         self.alpha = exp((market.interest_rate * self.time_delta) + (market.volatility * self.multiplicator * sqrt(self.time_delta)))
         self.counter = 0
+        self.proba_threshold = 0.000001
+        self.pruning = pruning
     market:Market
     steps_number:int
     alpha:float
@@ -91,9 +93,11 @@ class Tree:
     option:Option
     discount_factor:float
     counter:int
+    proba_threshold:float
+    pruning:bool
 
     def variance(self, node:Node):
-        return (node.stock_price**2)*(exp((self.market.volatility**2)*self.time_delta)-1)*(self.discount_factor**2)
+        return (exp((self.market.volatility**2)*self.time_delta)-1)*((self.discount_factor*node.stock_price)**2)
     
     def compute_transition_probas(self, node:Node):
         variance = self.variance(node)
@@ -119,12 +123,12 @@ class Tree:
         closest_node_down = node
         min_delta_up = node_price
         min_delta_down = node_price
-        while (node_up != None and node_up.stock_price < (node.stock_price * (1+self.alpha))/2):
+        while (node_up != None and node_up.stock_price < (node_price * (1 + self.alpha))/2):
             if (abs(node_up.stock_price - node_price) < min_delta_up):
                 closest_node_up = node_up
                 min_delta_up = abs(node_up.stock_price - node_price)
             node_up = node_up.above
-        while (node_down != None and node_down.stock_price > (node.stock_price+(node.stock_price / self.alpha))/2):
+        while (node_down != None and node_down.stock_price > (node_price * (1 + (1 / self.alpha)))/2):
             if (abs(node_down.stock_price - node_price) < min_delta_down):
                 closest_node_down = node_down
                 min_delta_down = abs(node_down.stock_price - node_price)
@@ -168,48 +172,38 @@ class Tree:
             node.next_mid.above = Node(node.next_mid.stock_price * self.alpha)
             node.next_mid.above.payoff = self.european_payoff(node.next_mid.above)
             node.next_mid.above.below = node.next_mid
-            self.counter += 1
         
         if (node.next_mid.below == None):
             node.next_mid.below = Node(node.next_mid.stock_price / self.alpha)
             node.next_mid.below.payoff = self.european_payoff(node.next_mid.below)
             node.next_mid.below.above = node.next_mid
-            self.counter += 1
         node.next_up = node.next_mid.above
         node.next_down = node.next_mid.below
 
     def build_above(self, node:Node):
-        if node == None:
-            #print("Building up done")
-            return
-        
-        self.link_and_build(node, node.below.next_mid)
-
-        self.compute_transition_probas(node)
-
-        self.compute_probas(node)
-
-        self.build_above(node.above)
-
-        self.counter += 1
+        while (node != None):
+            self.link_and_build(node, node.below.next_mid)
+            self.compute_transition_probas(node)
+            self.compute_probas(node)
+            if (self.pruning):
+                if (node.proba_node < self.proba_threshold):
+                    node.next_up = None
+                    return
+            node = node.above
 
         return
 
     def build_below(self, node:Node):
-        if node == None:
-            #print("Building down done")
-            return
-        
-        self.link_and_build(node, node.above.next_mid)
+        while (node != None):
+            self.link_and_build(node, node.above.next_mid)
+            self.compute_transition_probas(node)
+            self.compute_probas(node)
+            if (self.pruning):
+                if (node.proba_node < self.proba_threshold):
+                    node.next_down = None
+                    return
+            node = node.below
 
-        self.compute_transition_probas(node)
-
-        self.compute_probas(node)
-
-        self.build_below(node.below)
-
-        self.counter += 1
-        
         return 
 
     def build(self, node:Node, steps_left:int):
@@ -222,7 +216,7 @@ class Tree:
             node = node.next_mid
             steps_left = steps_left-1
 
-    def compute_probas(self, node):
+    def compute_probas(self, node:Node):
         node.next_up.proba_node += node.proba_node*node.proba_up
         node.next_mid.proba_node += node.proba_node*node.proba_mid
         node.next_down.proba_node += node.proba_node*node.proba_down
@@ -240,7 +234,7 @@ class Tree:
         while(node_down != None):
             sum += node_down.payoff * node_down.proba_node
             node_down = node_down.below
-        return sum*exp(-self.market.interest_rate*((self.option.maturity_date-self.option.pricing_date).days/365))
+        return sum/self.discount_factor**self.steps_number
 
     def price(self, node:Node):
         if self.option.option_type == Option_Type.European:
@@ -258,16 +252,18 @@ mat_date = datetime(2023,9,29)
 stock_price = 100
 interest_rate = 0.03
 vol = 0.25
-nb_steps = 100000
+nb_steps = 365
 dividend_date = datetime(2023,5,15)
 dividend = 2
+pruning = True
 
-
-
-call = Option(mat_date, pricing_date, Option_Type.European, 120, True)
+toc = perf_counter()
+call = Option(mat_date, pricing_date, Option_Type.European, 110, True)
 put = Option(mat_date, pricing_date, Option_Type.European, 110, False)
 market = Market(interest_rate, vol, dividend, dividend_date, stock_price)
-tree = Tree(nb_steps, market, put)
+tree = Tree(nb_steps, market, call, pruning)
 tree.build(tree.root, tree.steps_number)
-print(tree.price(tree.root))
-print(tree.root.counter)
+print(f"Price : {tree.price(tree.root):0.4f}")
+tic = perf_counter()
+print(f"Nodes : {Node.counter}")
+print(f"Time : {tic-toc:0.4f} seconds")
