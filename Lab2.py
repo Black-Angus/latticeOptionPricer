@@ -4,7 +4,7 @@ from math import exp, sqrt, floor
 from time import perf_counter
 
 class Node:
-    counter = 0 # for debug purposes only, can be removed
+    counter = 0
     def __init__(self, stock_price:float) :
         self.stock_price = stock_price
         self.proba_down = 0
@@ -13,7 +13,7 @@ class Node:
         self.payoff = 0
         self.proba_node = 0
         self.forward = 0
-        Node.counter += 1 # idem
+        Node.counter += 1
 
     stock_price:float
     proba_up:float
@@ -83,7 +83,7 @@ class Tree:
         self.root.proba_node = 1
         self.alpha = exp((market.interest_rate * self.time_delta) + (market.volatility * self.multiplicator * sqrt(self.time_delta)))
         self.counter = 0
-        self.proba_threshold = 0.0000001 # to be edited, should depend on variance
+        self.proba_threshold = 0.00000001 
         self.pruning = pruning
     market:Market
     steps_number:int
@@ -102,21 +102,14 @@ class Tree:
     
     def Compute_transition_probas(self, node:Node, div:float):
         variance = self.Variance(node)
-        node.proba_down = ((((node.forward)**(-2)) * (variance + ((node.next_mid.stock_price)**2))) - 1 - ((self.alpha+1) * ((((node.forward)**(-1))*(node.next_mid.stock_price))-1))) / ((1-self.alpha) * ((self.alpha**(-2)) - 1)) # to be edited, gives wrong proba on dividend distribution
-        node.proba_up = (node.next_mid.stock_price **(-1) * node.next_mid.stock_price - 1 - (self.alpha**(-1) - 1)*node.proba_down) / (self.alpha - 1)
+        node.proba_down = (((((node.forward+div)**(-2)) * (variance 
+        + ((node.forward)**2))) - 1 - ((self.alpha+1) * (node.forward/(node.forward+div)-1))) 
+        / ((1-self.alpha) * ((self.alpha**(-2)) - 1)))
+        node.proba_up = (node.forward **(-1) * node.forward - 1 - (self.alpha**(-1) - 1)*node.proba_down) / (self.alpha - 1)
         node.proba_mid = 1 - node.proba_down - node.proba_up
 
         if node.proba_down < 0:
             raise ValueError(f"Negative probability found for node {node.stock_price}")
-
-
-        # for debug purpose, can be removed
-        #print(f"For node {node.stock_price}")
-        #print(f"Variance: {variance}")
-        #print(f"Proba up {node.proba_up}")
-        #print(f"Proba mid {node.proba_mid}")
-        #print(f"Forward {node.forward}")
-        #print(f"Proba down {node.proba_down}")
         return
     
     def Find_closest_node(self, node:Node, node_price:Node):
@@ -274,43 +267,21 @@ class Tree:
             return self.Price_european()
         else:
             return self.Price_american()
-    
-    #for debug purpose only can be removed
-    def print(self):
-        root = self.root
-        while (root != None):
-            print("Root ", root.stock_price)
-            #print("Proba: ", root.proba_node)
-            print("Proba down: ", root.proba_down)
-            up = root
-            down = root
-            while(up.above != None):
-                print("Node ", up.above.stock_price)
-             #   print("Proba: ", up.above.proba_node)
-                print("Proba down: ", up.above.proba_down)
-                up = up.above
-            while(down.below != None):
-                print("Node ", down.below.stock_price)
-              #  print("Proba: ", down.below.proba_node)
-                print("Proba down: ", down.below.proba_down)
-                down = down.below
-            root = root.next_mid
-        return
 
 pricing_date = datetime(2022,9,29)
 stock_price = 100
 interest_rate = 0.03
 vol = 0.25
-dividend = 0
+dividend = 2
 dividend_date = datetime(2022,12,1)
 
 mat_date = datetime(2023,2,23)
 type = Option_Type.Put
-contract_type = Contract_Type.American
+contract_type = Contract_Type.European
 strike = 80
 
-nb_steps = 500
-pruning = True
+nb_steps = 5
+pruning = False
 
 tac = perf_counter()
 option = Option(mat_date, pricing_date, contract_type, strike, type)
@@ -321,4 +292,3 @@ print(f"Price : {tree.Price():0.4f}")
 tic = perf_counter()
 print(f"Nodes : {Node.counter}")
 print(f"Time : {tic-tac:0.4f} seconds")
-#tree.print()
